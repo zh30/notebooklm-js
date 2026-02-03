@@ -1,116 +1,162 @@
 # Agent Guidelines for notebooklm-js
 
-This repository contains a TypeScript/Bun client for Google NotebookLM, ported from `notebooklm-py`.
-It provides both a library (`src/client.ts`) and a CLI (`src/cli/index.ts`).
+TypeScript/Bun client for Google NotebookLM, ported from `notebooklm-py`.
+Provides a library (`src/client.ts`) and CLI (`src/cli/index.ts`).
 
 ## 1. Environment & Commands
 
-This project uses **Bun** as the runtime and package manager.
+This project uses **Bun** as runtime and package manager.
 
-- **Install Dependencies**:
-  ```bash
-  bun install
-  ```
-- **Run Tests**:
-  ```bash
-  bun test                    # Run all tests
-  bun test tests/rpc.test.ts  # Run specific file
-  bun test -t "encode"        # Run tests matching pattern
-  ```
-- **Type Check**:
-  ```bash
-  bun run check               # Runs tsc --noEmit
-  ```
-- **Lint & Format**:
-  ```bash
-  bun run lint                # Runs biome check
-  bun run format              # Runs biome format --write
-  ```
-- **Run CLI**:
-  ```bash
-  bun run cli <command>       # e.g., bun run cli list
-  bun run cli login           # Launch browser for auth
-  ```
+```bash
+bun install                  # Install dependencies
+bun test                     # Run all tests
+bun test tests/rpc.test.ts   # Run specific file
+bun test -t "encode"         # Run tests matching pattern
+bun run check                # Type check (tsc --noEmit)
+bun run lint                 # Biome check
+bun run format               # Biome format --write
+bun run cli <command>        # e.g., bun run cli list
+bun run cli login            # Launch browser for auth
+```
 
 ## 2. Code Style & Standards
 
 ### Formatting and Linting
-- **Biome** is the single source of truth.
-- **Strict Rule**: Always run `bun run format` and `bun run lint` before committing.
-- Do not use Prettier or ESLint.
+- **Biome** is the single source of truth (no Prettier/ESLint)
+- Run `bun run format && bun run lint` before committing
 
 ### TypeScript Configuration
-- **Strict Mode**: Enabled (`strict: true`). No implicit `any`.
-- **Target**: `ESNext`. Use modern features (e.g., top-level await, native `fetch`).
-- **Imports**:
-  - Use `import type` for type definitions (`verbatimModuleSyntax` is enabled).
-  - Prefer named exports over default exports.
+- **Strict mode**: `strict: true`, `noUncheckedIndexedAccess: true`
+- **Target**: `ESNext` - use modern features (top-level await, native `fetch`)
+- **Module**: `verbatimModuleSyntax` enabled - use `import type` for type-only imports
+
+### Imports
+```typescript
+// Type-only imports (REQUIRED due to verbatimModuleSyntax)
+import type { Notebook, Source } from "./types";
+
+// Value imports
+import { ClientCore } from "./core/client";
+import { RPCMethod, BATCHEXECUTE_URL } from "./rpc/types";
+```
 
 ### Naming Conventions
-- **Files**: `kebab-case` (e.g., `url-utils.ts`) or `camelCase` matching exports.
-- **Classes**: `PascalCase` (e.g., `NotebookLMClient`).
-- **Interfaces/Types**: `PascalCase` (e.g., `Notebook`, `Source`).
-- **Variables/Functions**: `camelCase` (e.g., `getHomeDir`, `rpcCall`).
-- **Constants**: `UPPER_SNAKE_CASE` (e.g., `BATCHEXECUTE_URL`).
+| Element | Convention | Example |
+|---------|------------|---------|
+| Files | `kebab-case` or `camelCase` | `url-utils.ts`, `encoder.ts` |
+| Classes | `PascalCase` | `NotebookLMClient`, `ClientCore` |
+| Interfaces/Types | `PascalCase` | `Notebook`, `AuthTokens` |
+| Enums | `PascalCase` | `RPCMethod`, `ArtifactStatus` |
+| Variables/Functions | `camelCase` | `getHomeDir`, `rpcCall` |
+| Constants | `UPPER_SNAKE_CASE` | `BATCHEXECUTE_URL`, `DEFAULT_TIMEOUT` |
+
+### Exports
+- Prefer named exports over default exports
+- One class per file for API classes (`NotebooksAPI`, `SourcesAPI`, etc.)
 
 ## 3. Architecture & Patterns
 
 ### Directory Structure
-- `src/client.ts`: Main entry point. Exposes `NotebooksAPI`, `SourcesAPI`, `ChatAPI`.
-- `src/core/`: Infrastructure.
-  - `auth.ts`: Cookie/token management.
-  - `client.ts`: `ClientCore` handles HTTP requests and retries.
-  - `exceptions.ts`: Custom error hierarchy.
-- `src/rpc/`: Protocol layer.
-  - `types.ts`: `RPCMethod` enum and data types.
-  - `encoder.ts`: Encodes requests into `batchexecute` format.
-  - `decoder.ts`: Decodes chunked JSON responses.
-- `src/cli/`: Command-line interface.
+```
+src/
+├── client.ts          # Main entry: NotebookLMClient
+├── notebooks.ts       # NotebooksAPI
+├── sources.ts         # SourcesAPI
+├── chat.ts            # ChatAPI
+├── types.ts           # Domain types (Notebook, Source, etc.)
+├── core/
+│   ├── auth.ts        # Cookie/token management
+│   ├── client.ts      # ClientCore (HTTP + retries)
+│   ├── exceptions.ts  # Error hierarchy
+│   └── paths.ts, url_utils.ts
+├── rpc/
+│   ├── types.ts       # RPCMethod enum, constants
+│   ├── encoder.ts     # Request encoding
+│   └── decoder.ts     # Response decoding
+└── cli/
+    └── index.ts, helpers.ts
+```
 
-### RPC Protocol
-The client communicates via Google's `batchexecute` protocol.
-- **Adding a new method**:
-  1. Add the method ID to `RPCMethod` enum in `src/rpc/types.ts`.
-  2. Implement the wrapper method in the appropriate API class (e.g., `NotebooksAPI`).
-  3. Use `this.core.rpcCall(RPCMethod.NEW_METHOD, params)` to execute.
-  4. Create a static `fromApiResponse` method in the return type class to parse the result.
-
-### Authentication
-- **Mechanism**: Cookie-based authentication (`SID`, `HSID`, etc.) + CSRF token (`SNlM0e`).
-- **Login Flow**:
-  - CLI uses `playwright` to launch a persistent browser context.
-  - User logs in manually via Google.
-  - Session cookies are saved to `~/.notebooklm/storage_state.json`.
-  - Library loads this state via `AuthTokens.fromStorage()`.
+### RPC Protocol (batchexecute)
+Adding a new RPC method:
+1. Add method ID to `RPCMethod` enum in `src/rpc/types.ts`
+2. Implement wrapper in appropriate API class
+3. Use `this.core.rpcCall(RPCMethod.NEW_METHOD, params)`
+4. Add static `fromApiResponse` method to parse results
 
 ### Error Handling
-- All errors extend `NotebookLMError`.
-- **Hierarchy**:
-  - `NotebookLMError`
-    - `NetworkError` (fetch failures)
-    - `RPCError` (API errors)
-      - `AuthError` (401/403)
-      - `RateLimitError` (429)
-    - `NotebookNotFoundError`
-    - `SourceError`
-- **Pattern**: Catch raw errors in `ClientCore`, wrap them in typed exceptions, and rethrow.
+All errors extend `NotebookLMError`:
+```
+NotebookLMError
+├── ValidationError, ConfigurationError
+├── NetworkError → RPCTimeoutError
+├── RPCError → AuthError, RateLimitError, ServerError, ClientError, DecodingError
+├── NotebookError → NotebookNotFoundError
+├── SourceError → SourceAddError, SourceNotFoundError, SourceProcessingError
+└── ArtifactError → ArtifactNotFoundError, ArtifactNotReadyError
+```
+Pattern: Catch raw errors in `ClientCore`, wrap in typed exceptions, rethrow.
 
-## 4. Porting Guidelines
-When porting code from the `py/` directory:
-1. **Maintain Logic**: Keep the reverse-engineered logic (RPC IDs, parameter structures) intact.
-2. **Adapt Idioms**: Use TypeScript idioms (e.g., `map/filter` instead of list comprehensions).
-3. **Dependencies**: Use `bun` native APIs (`Bun.file`, `fetch`) instead of Node.js `fs` or `axios` where appropriate.
-4. **Ignore Python Errors**: The `py/` directory is for reference only; ignore LSP errors in `.py` files.
+### API Response Parsing
+The API returns nested arrays with many nulls. Always use optional chaining:
+```typescript
+// CORRECT: Safe access with optional chaining
+const title = data[0]?.[1] ?? "Untitled";
+const items = result?.[0] ?? [];
 
-## 5. Development Workflow
-1. **Analyze**: Read relevant `py/` files to understand the original implementation.
-2. **Implement**: Write TypeScript code in `src/`.
-3. **Test**:
-   - Write unit tests for logic (e.g., parsers).
-   - Use `bun run cli` to manually verify integration with the real API.
-4. **Verify**: Run `bun run check` and `bun run lint`.
+// WRONG: Direct access (crashes on null/undefined)
+const title = data[0][1];
+```
 
-## 6. Common Issues
-- **XSSI Prefix**: Google responses start with `)]}'`. Use `stripAntiXssi` from `src/rpc/decoder.ts`.
-- **Chunked Responses**: Responses are line-delimited JSON chunks. Use `parseChunkedResponse`.
-- **Undefined Properties**: The API returns nested arrays with many nulls. Always check array length and existence before accessing indices (e.g., `data[0]?.[1]`).
+### Static Factory Pattern
+Domain types use static `fromApiResponse` for parsing:
+```typescript
+class Notebook {
+  static fromApiResponse(data: any): Notebook {
+    return new Notebook(
+      data[0] ?? "",           // id
+      data[1]?.[0]?.[3] ?? "", // title
+    );
+  }
+}
+```
+
+## 4. Testing
+
+Tests use Bun's built-in test runner:
+```typescript
+import { test, expect } from "bun:test";
+
+test("description", () => {
+  expect(actual).toEqual(expected);
+});
+```
+- Unit tests in `tests/` directory, naming: `*.test.ts`
+- Focus on logic tests (parsers, encoders)
+- Manual CLI testing for API integration
+
+## 5. Porting from Python
+
+When porting from `py/` directory:
+1. **Maintain logic**: Keep reverse-engineered RPC IDs and parameter structures
+2. **Adapt idioms**: Use `map/filter` instead of list comprehensions
+3. **Use Bun APIs**: Prefer `Bun.file`, native `fetch` over Node.js equivalents
+4. **Ignore Python errors**: `py/` is reference only; ignore LSP errors
+
+## 6. Common Gotchas
+
+### XSSI Prefix
+Google responses start with `)]}'\n`. Use `stripAntiXssi` from `src/rpc/decoder.ts`.
+
+### Chunked Responses
+Responses are line-delimited JSON chunks (length + data). Use `parseChunkedResponse`.
+
+### Authentication
+- Cookie-based: `SID`, `HSID`, etc. + CSRF token (`SNlM0e`)
+- Session saved to `~/.notebooklm/storage_state.json`
+- Use `AuthTokens.fromStorage()` to load
+
+### Type Safety
+- Never use `as any` or `@ts-ignore`
+- `noUncheckedIndexedAccess` means array access returns `T | undefined`
+- Validate API responses before accessing nested properties
